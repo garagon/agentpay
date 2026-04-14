@@ -1,6 +1,6 @@
 {
   "name": "agentpay-security",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Payment security plugin for Claude Code. Intercepts financial tool calls, detects MCP tampering, blocks fraud.",
   "bin": {
     "agentpay": "bin/cli.js"
@@ -42,5 +42,10 @@
   ],
   "engines": {
     "node": ">=16"
+  },
+  "dependencies": {
+    "playwright": "^1.59.1",
+    "pptxgenjs": "^4.0.1",
+    "sharp": "^0.33.5"
   }
 }
