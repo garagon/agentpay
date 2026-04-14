@@ -8,6 +8,5 @@
   "homepage": "https://github.com/garagon/agentpay",
   "repository": "https://github.com/garagon/agentpay",
   "license": "MIT",
-  "keywords": ["security", "payment", "mcp", "402", "agent", "fraud"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["security", "payment", "mcp", "402", "agent", "fraud"]
 }
