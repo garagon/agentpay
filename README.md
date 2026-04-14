@@ -2,7 +2,7 @@
 
 **Security plugin for Claude Code that protects agent-to-agent payments and transactions.**
 
-Built at the Anthropic/Claude Hackathon 2026. Payment security track.
+Built at the [Kaszek & Anthropic Buenos Aires Hackathon 2026](https://dev.kaszek.com/).
 
 ---
 
