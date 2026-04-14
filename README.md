@@ -2,7 +2,37 @@
 
 **Security plugin for Claude Code that protects agent-to-agent payments and transactions.**
 
-Built at the [Kaszek & Anthropic Buenos Aires Hackathon 2026](https://dev.kaszek.com/).
+Built at the [Kaszek & Anthropic Buenos Aires Hackathon 2026](https://dev.kaszek.com/) -- Open Track.
+
+## Install and use
+
+As a Claude Code plugin:
+
+```bash
+claude plugins marketplace add garagon/agentpay
+claude plugins install agentpay@agentpay
+```
+
+Or via npm:
+
+```bash
+npm i -g agentpay-security && agentpay install
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/garagon/agentpay && cd agentpay
+go build -o agentpay-bin . && ./agentpay-bin install
+```
+
+Once installed, AgentPay runs automatically on every tool call. Try the demo:
+
+```bash
+agentpay demo        # Run 7 attack scenarios
+agentpay scan .      # Scan for compromised npm packages
+agentpay audit       # View payment audit trail
+```
 
 ---
 
@@ -174,28 +204,6 @@ agentpay clean .    # Quarantine compromised packages to /tmp
 - **Tamper-evident** -- SHA-256 hash chain on every decision.
 - **Zero config** -- Sensible defaults, adjust only if needed.
 
-## Install
-
-As a Claude Code plugin:
-
-```bash
-claude plugins marketplace add garagon/agentpay
-claude plugins install agentpay@agentpay
-```
-
-Or via npm:
-
-```bash
-npm i -g agentpay-security && agentpay install
-```
-
-Or from source:
-
-```bash
-git clone https://github.com/garagon/agentpay && cd agentpay
-go build -o agentpay-bin . && ./agentpay-bin install
-```
-
 ## CLI
 
 ```
@@ -223,7 +231,13 @@ amount_drift_tolerance: 0.01               # 1% tolerance for amount changes
 
 ## Team
 
-Built by [GARAGON](https://github.com/garagon).
+| | Name | GitHub |
+|---|------|--------|
+| G | Gus Aragon | [@garagon](https://github.com/garagon) |
+| I | Ignacio Aracena | [@ignacioaracena](https://github.com/ignacioaracena) |
+| M | Mauro Proto Cassina | [@MauroProto](https://github.com/MauroProto) |
+| N | N. Spagnuolo | [@nspagnuolo](https://github.com/nspagnuolo) |
+| S | Sebastian Buffo Sempe | [@sebastianbuffosempe](https://github.com/sebastianbuffosempe) |
 
 ## License
 
