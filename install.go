@@ -11,7 +11,7 @@ import (
 
 const (
 	pluginName      = "agentpay"
-	marketplaceName = "garagon-agentpay"
+	marketplaceName = "agentpay"
 	marketplaceRepo = "garagon/agentpay"
 )
 
