@@ -321,13 +321,13 @@ amount_drift_tolerance: 0.01               # 1% tolerance for amount changes
 
 ## Team
 
-| | Name | GitHub |
-|---|------|--------|
-| G | Gus Aragon | [@garagon](https://github.com/garagon) |
-| I | Ignacio Aracena | [@ignacioaracena](https://github.com/ignacioaracena) |
-| M | Mauro Proto Cassina | [@MauroProto](https://github.com/MauroProto) |
-| N | N. Spagnuolo | [@nspagnuolo](https://github.com/nspagnuolo) |
-| S | Sebastian Buffo Sempe | [@sebastianbuffosempe](https://github.com/sebastianbuffosempe) |
+| Name | GitHub |
+|------|--------|
+| Gus Aragon | [@garagon](https://github.com/garagon) |
+| Ignacio Aracena | [@ignacio-aracena](https://github.com/ignacio-aracena) |
+| Mauro Proto Cassina | [@MauroProto](https://github.com/MauroProto) |
+| Nicolas Spagnuolo | [@nicoespa](https://github.com/nicoespa) |
+| Sebastian Buffo Sempe | [@sbuffose](https://github.com/sbuffose) |
 
 ## License
 
