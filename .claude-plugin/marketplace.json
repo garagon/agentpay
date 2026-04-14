@@ -1,0 +1,18 @@
+{
+  "name": "garagon-agentpay",
+  "owner": {
+    "name": "GARAGON",
+    "url": "https://github.com/garagon"
+  },
+  "metadata": {
+    "description": "AgentPay - Payment security plugin for Claude Code",
+    "version": "0.3.0"
+  },
+  "plugins": [
+    {
+      "name": "agentpay",
+      "description": "Intercepts financial tool calls, detects MCP tampering, blocks fraud before money moves.",
+      "source": "./"
+    }
+  ]
+}
