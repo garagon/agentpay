@@ -46,7 +46,7 @@ func newInstallCmd() *cobra.Command {
 			configDir := DefaultConfigDir()
 			settingsPath := DefaultSettingsPath()
 
-			hookCmd, err := resolveHookCommand()
+			pluginRoot, err := resolvePluginRoot()
 			if err != nil {
 				return err
 			}
@@ -56,9 +56,9 @@ func newInstallCmd() *cobra.Command {
 			}
 
 			fmt.Println()
-			fmt.Println("  AgentPay installed successfully.")
+			fmt.Println("  AgentPay installed as Claude Code plugin.")
 			fmt.Println()
-			fmt.Printf("  Hook:   PreToolUse -> %s\n", hookCmd)
+			fmt.Printf("  Plugin: agentpay@local -> %s\n", pluginRoot)
 			fmt.Printf("  Config: %s/policy.yaml\n", configDir)
 			fmt.Printf("  Audit:  %s/audit.jsonl\n", configDir)
 			fmt.Println()

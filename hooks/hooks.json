@@ -1,0 +1,16 @@
+{
+  "description": "AgentPay - 5-stage payment security pipeline for financial tool calls",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

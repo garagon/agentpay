@@ -6,29 +6,38 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-// hookCommandSuffix is appended to the binary path in the hook config.
-const hookCommandSuffix = " guard"
+const pluginName = "agentpay"
 
-// resolveHookCommand returns the absolute path to this binary + " guard".
-// Using the absolute path means the hook works regardless of the user's PATH.
-func resolveHookCommand() (string, error) {
+// resolvePluginRoot returns the directory containing .claude-plugin/.
+// This is the root of the AgentPay project.
+func resolvePluginRoot() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("resolve executable path: %w", err)
+		return "", fmt.Errorf("resolve executable: %w", err)
 	}
 	abs, err := filepath.EvalSymlinks(exe)
 	if err != nil {
 		return "", fmt.Errorf("resolve symlinks: %w", err)
 	}
-	return abs + hookCommandSuffix, nil
+	return filepath.Dir(abs), nil
 }
 
-// Install adds the AgentPay PreToolUse hook to Claude Code's settings.json
-// and creates the config directory with default policy.
+// resolveHookCommand returns the absolute path to this binary + " guard".
+func resolveHookCommand() (string, error) {
+	root, err := resolvePluginRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "agentpay-bin guard"), nil
+}
+
+// Install registers AgentPay as a Claude Code plugin and creates
+// the config directory with default policy.
 func Install(configDir, settingsPath string) error {
-	hookCmd, err := resolveHookCommand()
+	pluginRoot, err := resolvePluginRoot()
 	if err != nil {
 		return err
 	}
@@ -46,39 +55,145 @@ func Install(configDir, settingsPath string) error {
 		}
 	}
 
-	// Read existing settings.
-	settings, err := readSettings(settingsPath)
-	if err != nil {
-		return fmt.Errorf("read settings: %w", err)
+	// Register as Claude Code plugin.
+	if err := registerPlugin(settingsPath, pluginRoot); err != nil {
+		return fmt.Errorf("register plugin: %w", err)
 	}
 
-	// Add PreToolUse hook with absolute path.
-	if addHook(settings, hookCmd) {
-		if err := writeSettings(settingsPath, settings); err != nil {
-			return fmt.Errorf("write settings: %w", err)
-		}
-	}
+	// Clean up old hook-style install if present.
+	cleanLegacyHook(settingsPath)
 
 	return nil
 }
 
-// Uninstall removes the AgentPay hook from Claude Code's settings.json.
-// Config directory is preserved.
+// Uninstall removes AgentPay from Claude Code.
 func Uninstall(settingsPath string) error {
+	if err := unregisterPlugin(settingsPath); err != nil {
+		return err
+	}
+	cleanLegacyHook(settingsPath)
+	return nil
+}
+
+// registerPlugin adds AgentPay to installed_plugins.json and enables it
+// in settings.json, making it appear in Claude Code's plugin list.
+func registerPlugin(settingsPath, pluginRoot string) error {
+	home, _ := os.UserHomeDir()
+
+	// 1. Add to installed_plugins.json.
+	ipPath := filepath.Join(home, ".claude", "plugins", "installed_plugins.json")
+	if err := addInstalledPlugin(ipPath, pluginRoot); err != nil {
+		return err
+	}
+
+	// 2. Enable in settings.json.
+	settings, err := readSettings(settingsPath)
+	if err != nil {
+		return err
+	}
+
+	enabled, _ := settings["enabledPlugins"].(map[string]any)
+	if enabled == nil {
+		enabled = make(map[string]any)
+		settings["enabledPlugins"] = enabled
+	}
+	enabled[pluginName+"@local"] = true
+
+	return writeSettings(settingsPath, settings)
+}
+
+// unregisterPlugin removes AgentPay from plugin registries.
+func unregisterPlugin(settingsPath string) error {
+	home, _ := os.UserHomeDir()
+
+	// Remove from installed_plugins.json.
+	ipPath := filepath.Join(home, ".claude", "plugins", "installed_plugins.json")
+	removeInstalledPlugin(ipPath)
+
+	// Disable in settings.json.
 	settings, err := readSettings(settingsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("read settings: %w", err)
+		return err
 	}
-
-	if removeHook(settings) {
-		if err := writeSettings(settingsPath, settings); err != nil {
-			return fmt.Errorf("write settings: %w", err)
+	if enabled, ok := settings["enabledPlugins"].(map[string]any); ok {
+		delete(enabled, pluginName+"@local")
+		if len(enabled) == 0 {
+			delete(settings, "enabledPlugins")
 		}
 	}
-	return nil
+	return writeSettings(settingsPath, settings)
+}
+
+// addInstalledPlugin writes to installed_plugins.json.
+func addInstalledPlugin(path, pluginRoot string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+
+	var data map[string]any
+	if raw, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(raw, &data)
+	}
+	if data == nil {
+		data = map[string]any{"version": float64(2)}
+	}
+
+	plugins, _ := data["plugins"].(map[string]any)
+	if plugins == nil {
+		plugins = make(map[string]any)
+		data["plugins"] = plugins
+	}
+
+	key := pluginName + "@local"
+	plugins[key] = []any{
+		map[string]any{
+			"scope":       "user",
+			"installPath": pluginRoot,
+			"version":     version,
+			"installedAt": time.Now().UTC().Format(time.RFC3339),
+			"lastUpdated": time.Now().UTC().Format(time.RFC3339),
+		},
+	}
+
+	raw, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(raw, '\n'), 0600)
+}
+
+// removeInstalledPlugin removes AgentPay from installed_plugins.json.
+func removeInstalledPlugin(path string) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return
+	}
+	plugins, _ := data["plugins"].(map[string]any)
+	if plugins == nil {
+		return
+	}
+	delete(plugins, pluginName+"@local")
+	out, _ := json.MarshalIndent(data, "", "  ")
+	_ = os.WriteFile(path, append(out, '\n'), 0600)
+}
+
+// cleanLegacyHook removes old hook-style AgentPay entries from settings.json
+// (from versions before plugin registration).
+func cleanLegacyHook(settingsPath string) {
+	settings, err := readSettings(settingsPath)
+	if err != nil {
+		return
+	}
+	if removeHook(settings) {
+		_ = writeSettings(settingsPath, settings)
+	}
 }
 
 // DefaultSettingsPath returns the path to Claude Code's user settings.
@@ -119,51 +234,14 @@ func writeSettings(path string, settings map[string]any) error {
 	return os.WriteFile(path, append(data, '\n'), 0600)
 }
 
-// isAgentPayHook returns true if the hook command is an agentpay guard command.
+// isAgentPayHook identifies legacy hook entries to clean up.
 func isAgentPayHook(cmd string) bool {
-	// Match both relative ("agentpay guard") and absolute ("/path/to/agentpay guard").
-	return cmd == "agentpay guard" || strings.HasSuffix(cmd, "/agentpay guard")
+	return cmd == "agentpay guard" ||
+		strings.HasSuffix(cmd, "/agentpay guard") ||
+		strings.HasSuffix(cmd, "/agentpay-bin guard")
 }
 
-// addHook inserts the AgentPay PreToolUse hook into settings. Returns
-// true if settings were modified.
-func addHook(settings map[string]any, hookCmd string) bool {
-	hooks, _ := settings["hooks"].(map[string]any)
-	if hooks == nil {
-		hooks = make(map[string]any)
-		settings["hooks"] = hooks
-	}
-
-	preToolUse, _ := hooks["PreToolUse"].([]any)
-
-	// Check if already installed (handles both old relative and new absolute paths).
-	for _, entry := range preToolUse {
-		m, _ := entry.(map[string]any)
-		innerHooks, _ := m["hooks"].([]any)
-		for _, h := range innerHooks {
-			hm, _ := h.(map[string]any)
-			if cmd, _ := hm["command"].(string); isAgentPayHook(cmd) {
-				return false
-			}
-		}
-	}
-
-	// Append our hook entry with absolute path.
-	entry := map[string]any{
-		"matcher": "",
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": hookCmd,
-			},
-		},
-	}
-	hooks["PreToolUse"] = append(preToolUse, entry)
-	return true
-}
-
-// removeHook removes the AgentPay hook from settings. Returns true if
-// settings were modified.
+// removeHook removes legacy AgentPay hook entries from settings.
 func removeHook(settings map[string]any) bool {
 	hooks, _ := settings["hooks"].(map[string]any)
 	if hooks == nil {
