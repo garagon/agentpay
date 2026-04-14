@@ -83,19 +83,20 @@ func NewPipeline(configDir string) (*Pipeline, error) {
 
 	lock, err := AcquireLock(lockPath)
 	if err != nil {
-		// Fail-open: if we can't lock, proceed without state tracking.
-		lock = nil
+		return nil, fmt.Errorf("acquire state lock: %w", err)
 	}
 
 	state, err := LoadState(statePath)
 	if err != nil {
-		state = NewState()
+		lock.Release()
+		return nil, fmt.Errorf("load state: %w", err)
 	}
 
 	auditPath := filepath.Join(configDir, "audit.jsonl")
 	auditLog, err := NewAuditLog(auditPath)
 	if err != nil {
-		auditLog = &AuditLog{path: auditPath, prevHash: genesisHash}
+		lock.Release()
+		return nil, fmt.Errorf("open audit log: %w", err)
 	}
 
 	return &Pipeline{
@@ -116,7 +117,7 @@ func (p *Pipeline) Run(input HookInput) (GuardResult, HookOutput) {
 	}
 
 	// Stage 1: Classify tool.
-	cls := ClassifyTool(input.ToolName, "")
+	cls := ClassifyToolCall(input.ToolName, "", input.ToolInput)
 
 	// Check policy overrides for always/never financial.
 	cls.Financial = p.applyFinancialOverrides(input.ToolName, cls.Financial)
@@ -152,9 +153,10 @@ func (p *Pipeline) Run(input HookInput) (GuardResult, HookOutput) {
 	result.Currency = currency
 
 	// Stage 3: Policy enforcement.
-	calls := p.state.Calls[input.ToolName]
-	spends := p.state.Spends[input.ToolName]
+	calls := p.state.Calls[financialStateKey]
+	spends := p.state.Spends[financialStateKey]
 	policyResult := CheckPolicy(p.policy, input.ToolName, amount, calls, spends)
+	var askReasons []string
 
 	switch policyResult.Decision {
 	case DecisionAmountExceeded, DecisionRateLimited, DecisionDailyLimitExceeded:
@@ -168,14 +170,11 @@ func (p *Pipeline) Run(input HookInput) (GuardResult, HookOutput) {
 		return result, makeDeny(fmt.Sprintf("[AgentPay] BLOCKED: %s", policyResult.Reason))
 
 	case DecisionApprovalRequired:
-		result.Decision = "ask"
-		result.Reason = policyResult.Reason
+		askReasons = append(askReasons, policyResult.Reason)
 		result.Stages = append(result.Stages, StageResult{
 			Name:   "policy",
 			Status: "approval_required",
 		})
-		p.logAudit(input, result)
-		return result, makeAsk(fmt.Sprintf("[AgentPay] %s", policyResult.Reason))
 
 	default:
 		result.Stages = append(result.Stages, StageResult{Name: "policy", Status: "allow"})
@@ -191,6 +190,9 @@ func (p *Pipeline) Run(input HookInput) (GuardResult, HookOutput) {
 			key := IntentKey(input.SessionID, recipient)
 			p.state.RegisterIntent(key, recipient, amount, currency)
 			result.Stages = append(result.Stages, StageResult{Name: "integrity", Status: "registered"})
+			if p.policy.RequireApprovalOnFirstRecipient {
+				askReasons = append(askReasons, fmt.Sprintf("first payment for recipient %s in session %s requires approval to establish a trusted baseline", recipient, input.SessionID))
+			}
 		} else {
 			// Check if this recipient is in any registered intent.
 			var matchingIntent *PaymentIntent
@@ -232,8 +234,15 @@ func (p *Pipeline) Run(input HookInput) (GuardResult, HookOutput) {
 	}
 
 	// All stages passed. Record the call for rate/spend tracking.
-	p.state.RecordCall(input.ToolName)
-	p.state.RecordSpend(input.ToolName, amount)
+	p.state.RecordFinancialCall(input.ToolName)
+	p.state.RecordFinancialSpend(input.ToolName, amount)
+
+	if len(askReasons) > 0 {
+		result.Decision = "ask"
+		result.Reason = strings.Join(askReasons, "; ")
+		p.logAudit(input, result)
+		return result, makeAsk(fmt.Sprintf("[AgentPay] %s", result.Reason))
+	}
 
 	result.Decision = "allow"
 	p.logAudit(input, result)

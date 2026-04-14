@@ -119,8 +119,7 @@ func VerifyChain(entries []AuditEntry) int {
 		if e.PrevHash != prev {
 			return i
 		}
-		expected := computeEntryHash(e)
-		if e.Hash != expected {
+		if !entryHashMatches(e) {
 			return i
 		}
 		prev = e.Hash
@@ -129,8 +128,43 @@ func VerifyChain(entries []AuditEntry) int {
 }
 
 func computeEntryHash(e AuditEntry) string {
+	payload := struct {
+		Timestamp      string   `json:"timestamp"`
+		SessionID      string   `json:"session_id"`
+		ToolName       string   `json:"tool_name"`
+		Classification string   `json:"classification"`
+		Amount         float64  `json:"amount,omitempty"`
+		Recipient      string   `json:"recipient,omitempty"`
+		Currency       string   `json:"currency,omitempty"`
+		Decision       string   `json:"decision"`
+		Reason         string   `json:"reason,omitempty"`
+		Stages         []string `json:"pipeline_stages"`
+		PrevHash       string   `json:"prev_hash"`
+	}{
+		Timestamp:      e.Timestamp,
+		SessionID:      e.SessionID,
+		ToolName:       e.ToolName,
+		Classification: e.Classification,
+		Amount:         e.Amount,
+		Recipient:      e.Recipient,
+		Currency:       e.Currency,
+		Decision:       e.Decision,
+		Reason:         e.Reason,
+		Stages:         e.Stages,
+		PrevHash:       e.PrevHash,
+	}
+	data, _ := json.Marshal(payload)
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("sha256:%x", sum[:])
+}
+
+func computeEntryHashLegacy(e AuditEntry) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\n%s\n%s\n%s\n%.2f\n%s",
 		e.PrevHash, e.Timestamp, e.ToolName, e.Decision, e.Amount, e.Recipient)
 	return fmt.Sprintf("sha256:%x", h.Sum(nil))
+}
+
+func entryHashMatches(e AuditEntry) bool {
+	return e.Hash == computeEntryHash(e) || e.Hash == computeEntryHashLegacy(e)
 }

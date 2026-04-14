@@ -15,8 +15,9 @@ if [ ! -f "$BINARY" ]; then
   fi
 fi
 
-# If binary still doesn't exist, fail-open (allow all).
+# If binary still doesn't exist, fail-closed.
 if [ ! -f "$BINARY" ]; then
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[AgentPay] BLOCKED: guard binary is missing"}}'
   exit 0
 fi
 

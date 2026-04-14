@@ -21,8 +21,9 @@ func TestClassifyTool(t *testing.T) {
 		{
 			name:        "generic send_money",
 			toolName:    "send_money",
-			wantFinance: false, // "send" and "money" are not in finance keywords
+			wantFinance: true,
 			wantImpact:  ImpactAction,
+			wantRisk:    RiskCritical,
 		},
 		{
 			name:        "payment in description",

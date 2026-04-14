@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // CompromisedPackage describes a known-bad npm package+version.
@@ -120,8 +119,37 @@ func ScanNodeModules(root string) (*ScanResult, error) {
 // CleanFindings removes compromised packages found by ScanNodeModules.
 // Moves them to a quarantine directory for forensic review.
 func CleanFindings(findings []ScanFinding, dryRun bool) []CleanActionResult {
-	ts := time.Now().Format("2006-01-02T150405.000000000")
-	quarantine := filepath.Join(os.TempDir(), "agentpay-quarantine", ts)
+	quarantineRoot := filepath.Join(os.TempDir(), "agentpay-quarantine")
+	if !dryRun {
+		if err := os.MkdirAll(quarantineRoot, 0700); err != nil {
+			var actions []CleanActionResult
+			for _, f := range findings {
+				actions = append(actions, CleanActionResult{
+					Package: f.Package,
+					Version: f.Version,
+					Path:    f.Path,
+					Action:  "failed",
+					Error:   err.Error(),
+				})
+			}
+			return actions
+		}
+	}
+
+	quarantine, err := os.MkdirTemp(quarantineRoot, "run-*")
+	if err != nil && !dryRun {
+		var actions []CleanActionResult
+		for _, f := range findings {
+			actions = append(actions, CleanActionResult{
+				Package: f.Package,
+				Version: f.Version,
+				Path:    f.Path,
+				Action:  "failed",
+				Error:   err.Error(),
+			})
+		}
+		return actions
+	}
 
 	var actions []CleanActionResult
 	for i, f := range findings {
@@ -133,12 +161,6 @@ func CleanFindings(findings []ScanFinding, dryRun bool) []CleanActionResult {
 		if dryRun {
 			action.Action = "would remove"
 		} else {
-			if err := os.MkdirAll(quarantine, 0700); err != nil {
-				action.Action = "failed"
-				action.Error = err.Error()
-				actions = append(actions, action)
-				continue
-			}
 			dst := filepath.Join(quarantine, quarantineEntryName(f, i))
 			if err := os.Rename(f.Path, dst); err != nil {
 				action.Action = "failed"
@@ -153,6 +175,15 @@ func CleanFindings(findings []ScanFinding, dryRun bool) []CleanActionResult {
 	return actions
 }
 
+func quarantineEntryName(f ScanFinding, index int) string {
+	base := filepath.Base(f.Path)
+	base = strings.ReplaceAll(base, string(filepath.Separator), "_")
+	if base == "." || base == "" {
+		base = "entry"
+	}
+	return fmt.Sprintf("%s-%s-%02d-%s", f.Package, f.Version, index+1, base)
+}
+
 // CleanActionResult describes what happened to a compromised package.
 type CleanActionResult struct {
 	Package     string `json:"package"`
@@ -161,15 +192,6 @@ type CleanActionResult struct {
 	Action      string `json:"action"`
 	Destination string `json:"destination,omitempty"`
 	Error       string `json:"error,omitempty"`
-}
-
-// quarantineEntryName builds a unique destination name for each finding,
-// combining package, version, index, and the basename of the source path
-// to avoid collisions when the same package appears in multiple locations
-// (e.g. node_modules/axios AND package-lock.json).
-func quarantineEntryName(f ScanFinding, index int) string {
-	base := filepath.Base(f.Path)
-	return fmt.Sprintf("%s-%s-%d-%s", f.Package, f.Version, index, base)
 }
 
 func readPkgJSON(path string) (name, version string) {

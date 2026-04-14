@@ -111,6 +111,53 @@ func TestAuditLog_TamperDetection(t *testing.T) {
 	}
 }
 
+func TestAuditLog_TamperDetectionCoversReasonAndStages(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+
+	al, err := NewAuditLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = al.Log(AuditEntry{
+		ToolName:       "send_money",
+		Classification: "action:critical",
+		Decision:       "deny",
+		Reason:         "recipient drift",
+		Stages:         []string{"classify:financial:critical", "integrity:RECIPIENT_DRIFT"},
+	})
+
+	entries, _ := ReadEntries(path)
+	entries[0].Reason = "different reason"
+	if invalid := VerifyChain(entries); invalid != 0 {
+		t.Fatalf("expected reason tampering detected at entry 0, got %d", invalid)
+	}
+
+	entries, _ = ReadEntries(path)
+	entries[0].Stages = []string{"classify:not_financial"}
+	if invalid := VerifyChain(entries); invalid != 0 {
+		t.Fatalf("expected stage tampering detected at entry 0, got %d", invalid)
+	}
+}
+
+func TestAuditLog_VerifyChainSupportsLegacyEntries(t *testing.T) {
+	entry := AuditEntry{
+		Timestamp: "2026-04-14T00:00:00Z",
+		SessionID: "legacy",
+		ToolName:  "send_money",
+		Amount:    50,
+		Recipient: "alice",
+		Decision:  "allow",
+		Stages:    []string{"policy:allow"},
+		PrevHash:  genesisHash,
+	}
+	entry.Hash = computeEntryHashLegacy(entry)
+
+	if invalid := VerifyChain([]AuditEntry{entry}); invalid != -1 {
+		t.Fatalf("expected legacy entry to verify, got invalid at %d", invalid)
+	}
+}
+
 func TestAuditLog_ChainContinuity(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.jsonl")

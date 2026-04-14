@@ -108,7 +108,7 @@ func ClassifyTool(name, description string) ToolClassification {
 	}
 
 	// Check finance keywords.
-	financeHits := matchWords(words, financeKeywords)
+	financeHits := appendUnique(matchWords(words, financeKeywords), matchPhrases(text, financeKeywords)...)
 	financial := len(financeHits) > 0
 	if financial {
 		matched = append(matched, financeHits...)
@@ -121,6 +121,19 @@ func ClassifyTool(name, description string) ToolClassification {
 		Financial:       financial,
 		MatchedKeywords: matched,
 	}
+}
+
+// ClassifyToolCall augments static tool-name classification with argument-level
+// signals so neutral tool names carrying payment-like parameters are still gated.
+func ClassifyToolCall(name, description string, args map[string]any) ToolClassification {
+	cls := ClassifyTool(name, description)
+	argHits, inferredFinancial := inferFinancialFromArgs(args)
+	if inferredFinancial {
+		cls.Financial = true
+		cls.MatchedKeywords = appendUnique(cls.MatchedKeywords, argHits...)
+		cls.RiskTier = deriveRiskTier(cls.ImpactTier, cls.Generality, cls.Financial)
+	}
+	return cls
 }
 
 // IsFinancial returns true if the tool name alone matches financial patterns.
@@ -180,4 +193,98 @@ func matchWords(words, keywords []string) []string {
 		}
 	}
 	return hits
+}
+
+func matchPhrases(text string, keywords []string) []string {
+	var hits []string
+	for _, kw := range keywords {
+		if strings.Contains(text, kw) {
+			hits = append(hits, kw)
+		}
+	}
+	return hits
+}
+
+func appendUnique(base []string, extra ...string) []string {
+	seen := make(map[string]bool, len(base))
+	for _, item := range base {
+		seen[item] = true
+	}
+	for _, item := range extra {
+		if item == "" || seen[item] {
+			continue
+		}
+		base = append(base, item)
+		seen[item] = true
+	}
+	return base
+}
+
+func inferFinancialFromArgs(args map[string]any) ([]string, bool) {
+	if len(args) == 0 {
+		return nil, false
+	}
+
+	var signals []string
+	var hasAmount, hasRecipient, hasCurrency, hasFinanceKeyword bool
+
+	var walk func(string, any)
+	walk = func(key string, value any) {
+		keyLower := strings.ToLower(key)
+		switch value := value.(type) {
+		case map[string]any:
+			for childKey, childValue := range value {
+				walk(childKey, childValue)
+			}
+		case []any:
+			for _, item := range value {
+				walk(key, item)
+			}
+		case string:
+			text := strings.ToLower(value)
+			if containsAny(keyLower, "amount", "value", "price", "cost", "total") {
+				hasAmount = true
+				signals = appendUnique(signals, "arg:amount")
+			}
+			if containsAny(keyLower, "recipient", "to", "destination", "payee", "receiver", "target", "wallet", "address") {
+				hasRecipient = true
+				signals = appendUnique(signals, "arg:recipient")
+			}
+			if containsAny(keyLower, "currency", "cur", "denomination") {
+				hasCurrency = true
+				signals = appendUnique(signals, "arg:currency")
+			}
+			financeHits := appendUnique(matchWords(tokenize(keyLower+" "+text), financeKeywords), matchPhrases(keyLower+" "+text, financeKeywords)...)
+			if len(financeHits) > 0 {
+				hasFinanceKeyword = true
+				signals = appendUnique(signals, financeHits...)
+			}
+		case float64, float32, int, int32, int64:
+			if containsAny(keyLower, "amount", "value", "price", "cost", "total") {
+				hasAmount = true
+				signals = appendUnique(signals, "arg:amount")
+			}
+		}
+	}
+
+	for key, value := range args {
+		walk(key, value)
+	}
+
+	if hasFinanceKeyword {
+		return signals, true
+	}
+	if hasAmount && (hasRecipient || hasCurrency) {
+		return signals, true
+	}
+	return signals, false
+}
+
+func containsAny(s string, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if strings.Contains(s, candidate) {
+			return true
+		}
+	}
+	return false
 }

@@ -11,13 +11,14 @@ import (
 
 // Policy defines spending and rate limits for financial tool calls.
 type Policy struct {
-	MaxPerCall           float64  `yaml:"max_per_call"`
-	RequireApprovalAbove float64  `yaml:"require_approval_above"`
-	DailyLimit           float64  `yaml:"daily_limit"`
-	RateLimitPerHour     int      `yaml:"rate_limit_per_hour"`
-	AmountDriftTolerance float64  `yaml:"amount_drift_tolerance"`
-	AlwaysFinancial      []string `yaml:"always_financial,omitempty"`
-	NeverFinancial       []string `yaml:"never_financial,omitempty"`
+	MaxPerCall                      float64  `yaml:"max_per_call"`
+	RequireApprovalAbove            float64  `yaml:"require_approval_above"`
+	RequireApprovalOnFirstRecipient bool     `yaml:"require_approval_on_first_recipient"`
+	DailyLimit                      float64  `yaml:"daily_limit"`
+	RateLimitPerHour                int      `yaml:"rate_limit_per_hour"`
+	AmountDriftTolerance            float64  `yaml:"amount_drift_tolerance"`
+	AlwaysFinancial                 []string `yaml:"always_financial,omitempty"`
+	NeverFinancial                  []string `yaml:"never_financial,omitempty"`
 }
 
 // PolicyDecision is the outcome of a policy check.
@@ -41,11 +42,12 @@ type PolicyResult struct {
 // DefaultPolicy returns conservative default spending limits.
 func DefaultPolicy() Policy {
 	return Policy{
-		MaxPerCall:           500.00,
-		RequireApprovalAbove: 200.00,
-		DailyLimit:           2000.00,
-		RateLimitPerHour:     10,
-		AmountDriftTolerance: 0.01,
+		MaxPerCall:                      500.00,
+		RequireApprovalAbove:            200.00,
+		RequireApprovalOnFirstRecipient: true,
+		DailyLimit:                      2000.00,
+		RateLimitPerHour:                10,
+		AmountDriftTolerance:            0.01,
 	}
 }
 

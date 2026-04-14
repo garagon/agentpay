@@ -18,6 +18,8 @@ type State struct {
 	Intents map[string]PaymentIntent `json:"intents"` // session:recipient → intent
 }
 
+const financialStateKey = "__agentpay_financial__"
+
 // NewState creates an empty state.
 func NewState() *State {
 	return &State{
@@ -39,7 +41,7 @@ func LoadState(path string) (*State, error) {
 	}
 	s := NewState()
 	if err := json.Unmarshal(data, s); err != nil {
-		return NewState(), nil
+		return nil, fmt.Errorf("parse state: %w", err)
 	}
 	s.prune()
 	return s, nil
@@ -67,6 +69,14 @@ func (s *State) RecordCall(tool string) {
 	s.Calls[tool] = append(s.Calls[tool], time.Now().Unix())
 }
 
+// RecordFinancialCall records a financial tool call both globally and per tool.
+func (s *State) RecordFinancialCall(tool string) {
+	s.RecordCall(financialStateKey)
+	if tool != "" {
+		s.RecordCall(tool)
+	}
+}
+
 // RecordSpend records a spend amount for daily limit tracking.
 func (s *State) RecordSpend(tool string, amount float64) {
 	if amount <= 0 {
@@ -76,6 +86,14 @@ func (s *State) RecordSpend(tool string, amount float64) {
 		Amount: amount,
 		At:     time.Now().Unix(),
 	})
+}
+
+// RecordFinancialSpend records a financial spend both globally and per tool.
+func (s *State) RecordFinancialSpend(tool string, amount float64) {
+	s.RecordSpend(financialStateKey, amount)
+	if tool != "" {
+		s.RecordSpend(tool, amount)
+	}
 }
 
 // RegisterIntent stores a payment intent baseline if one does not already
@@ -172,7 +190,7 @@ func AcquireLock(path string) (*FileLock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		f.Close()
 		return nil, fmt.Errorf("acquire lock: %w", err)
 	}
@@ -184,7 +202,9 @@ func (fl *FileLock) Release() {
 	if fl.f == nil {
 		return
 	}
+	name := fl.f.Name()
 	_ = syscall.Flock(int(fl.f.Fd()), syscall.LOCK_UN)
 	fl.f.Close()
-	os.Remove(fl.f.Name())
+	fl.f = nil
+	os.Remove(name)
 }
