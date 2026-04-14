@@ -58,7 +58,7 @@ func newInstallCmd() *cobra.Command {
 			fmt.Println()
 			fmt.Println("  AgentPay installed as Claude Code plugin.")
 			fmt.Println()
-			fmt.Printf("  Plugin: agentpay@local -> %s\n", pluginRoot)
+			fmt.Printf("  Plugin: %s -> %s\n", pluginKey(), pluginRoot)
 			fmt.Printf("  Config: %s/policy.yaml\n", configDir)
 			fmt.Printf("  Audit:  %s/audit.jsonl\n", configDir)
 			fmt.Println()

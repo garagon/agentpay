@@ -9,10 +9,13 @@ import (
 	"time"
 )
 
-const pluginName = "agentpay"
+const (
+	pluginName      = "agentpay"
+	marketplaceName = "garagon-agentpay"
+	marketplaceRepo = "garagon/agentpay"
+)
 
 // resolvePluginRoot returns the directory containing .claude-plugin/.
-// This is the root of the AgentPay project.
 func resolvePluginRoot() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -34,8 +37,12 @@ func resolveHookCommand() (string, error) {
 	return filepath.Join(root, "agentpay-bin guard"), nil
 }
 
-// Install registers AgentPay as a Claude Code plugin and creates
-// the config directory with default policy.
+// pluginKey returns the full plugin identifier for Claude Code.
+func pluginKey() string {
+	return pluginName + "@" + marketplaceName
+}
+
+// Install registers AgentPay as a Claude Code plugin globally.
 func Install(configDir, settingsPath string) error {
 	pluginRoot, err := resolvePluginRoot()
 	if err != nil {
@@ -75,34 +82,51 @@ func Uninstall(settingsPath string) error {
 	return nil
 }
 
-// registerPlugin adds AgentPay to installed_plugins.json and enables it
-// in settings.json, making it appear in Claude Code's plugin list.
+// registerPlugin does three things:
+// 1. Adds the marketplace to extraKnownMarketplaces in settings.json
+// 2. Adds the plugin to installed_plugins.json
+// 3. Enables the plugin in enabledPlugins in settings.json
 func registerPlugin(settingsPath, pluginRoot string) error {
 	home, _ := os.UserHomeDir()
 
-	// 1. Add to installed_plugins.json.
-	ipPath := filepath.Join(home, ".claude", "plugins", "installed_plugins.json")
-	if err := addInstalledPlugin(ipPath, pluginRoot); err != nil {
-		return err
-	}
-
-	// 2. Enable in settings.json.
+	// 1. Read settings.
 	settings, err := readSettings(settingsPath)
 	if err != nil {
 		return err
 	}
 
+	// 2. Register marketplace in extraKnownMarketplaces.
+	marketplaces, _ := settings["extraKnownMarketplaces"].(map[string]any)
+	if marketplaces == nil {
+		marketplaces = make(map[string]any)
+		settings["extraKnownMarketplaces"] = marketplaces
+	}
+	marketplaces[marketplaceName] = map[string]any{
+		"source": map[string]any{
+			"repo":   marketplaceRepo,
+			"source": "github",
+		},
+	}
+
+	// 3. Enable plugin.
 	enabled, _ := settings["enabledPlugins"].(map[string]any)
 	if enabled == nil {
 		enabled = make(map[string]any)
 		settings["enabledPlugins"] = enabled
 	}
-	enabled[pluginName+"@local"] = true
+	enabled[pluginKey()] = true
 
-	return writeSettings(settingsPath, settings)
+	// 4. Write settings.
+	if err := writeSettings(settingsPath, settings); err != nil {
+		return err
+	}
+
+	// 5. Add to installed_plugins.json.
+	ipPath := filepath.Join(home, ".claude", "plugins", "installed_plugins.json")
+	return addInstalledPlugin(ipPath, pluginRoot)
 }
 
-// unregisterPlugin removes AgentPay from plugin registries.
+// unregisterPlugin removes AgentPay from all registries.
 func unregisterPlugin(settingsPath string) error {
 	home, _ := os.UserHomeDir()
 
@@ -110,7 +134,7 @@ func unregisterPlugin(settingsPath string) error {
 	ipPath := filepath.Join(home, ".claude", "plugins", "installed_plugins.json")
 	removeInstalledPlugin(ipPath)
 
-	// Disable in settings.json.
+	// Remove from settings.json.
 	settings, err := readSettings(settingsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -118,12 +142,19 @@ func unregisterPlugin(settingsPath string) error {
 		}
 		return err
 	}
+
+	// Remove from enabledPlugins.
 	if enabled, ok := settings["enabledPlugins"].(map[string]any); ok {
+		delete(enabled, pluginKey())
+		// Also clean up old "agentpay@local" entries.
 		delete(enabled, pluginName+"@local")
-		if len(enabled) == 0 {
-			delete(settings, "enabledPlugins")
-		}
 	}
+
+	// Remove marketplace.
+	if marketplaces, ok := settings["extraKnownMarketplaces"].(map[string]any); ok {
+		delete(marketplaces, marketplaceName)
+	}
+
 	return writeSettings(settingsPath, settings)
 }
 
@@ -147,8 +178,7 @@ func addInstalledPlugin(path, pluginRoot string) error {
 		data["plugins"] = plugins
 	}
 
-	key := pluginName + "@local"
-	plugins[key] = []any{
+	plugins[pluginKey()] = []any{
 		map[string]any{
 			"scope":       "user",
 			"installPath": pluginRoot,
@@ -179,13 +209,13 @@ func removeInstalledPlugin(path string) {
 	if plugins == nil {
 		return
 	}
-	delete(plugins, pluginName+"@local")
+	delete(plugins, pluginKey())
+	delete(plugins, pluginName+"@local") // clean old format
 	out, _ := json.MarshalIndent(data, "", "  ")
 	_ = os.WriteFile(path, append(out, '\n'), 0600)
 }
 
-// cleanLegacyHook removes old hook-style AgentPay entries from settings.json
-// (from versions before plugin registration).
+// cleanLegacyHook removes old hook-style AgentPay entries from settings.json.
 func cleanLegacyHook(settingsPath string) {
 	settings, err := readSettings(settingsPath)
 	if err != nil {
