@@ -1,0 +1,7 @@
+agentpay
+agentpay-bin
+*.jsonl
+*.tmp
+node_modules/
+*.tgz
+.agentpay/

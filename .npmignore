@@ -1,0 +1,8 @@
+*_test.go
+agentpay
+agentpay-bin
+*.jsonl
+*.tmp
+.git
+.github
+DOCS/
