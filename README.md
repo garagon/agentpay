@@ -1,16 +1,168 @@
 # AgentPay
 
-Security plugin for Claude Code that protects agent-to-agent payments and transactions.
+**Security plugin for Claude Code that protects agent-to-agent payments and transactions.**
 
-## Why this matters
+Built at the Anthropic/Claude Hackathon 2026. Payment security track.
 
-AI agents are writing 90% of code in production. They install MCP servers, add skills, and execute tools with minimal human review. This creates a new class of risk:
+---
 
-- **Supply chain attacks on AI tooling** -- Compromised libraries like axios (v1.7.8, 1.7.9) ship malicious postinstall scripts that exfiltrate credentials. Agents install them without awareness.
-- **MCP server poisoning** -- A compromised MCP server can silently modify payment parameters between what the agent decided and what actually executes.
-- **Agent-to-agent transactions** -- As agents start transacting with each other (A2A payments, stablecoin transfers), there is no security layer verifying that the payment leaving one agent matches what arrives at the other.
+## What we built
 
-AgentPay addresses the vulnerability in agent-agent payment flows by intercepting every financial operation and verifying it before execution.
+AgentPay is a Claude Code plugin that intercepts financial tool calls in real time, detects when a compromised MCP server tampers with payments, and blocks fraud before money moves. It also detects and quarantines compromised npm packages (axios supply chain attack).
+
+- **Real-time payment guard** -- 5-stage security pipeline on every financial tool call
+- **Payment drift detection** -- Catches when a MCP changes the recipient, amount, or currency
+- **Supply chain scanner** -- Detects and removes compromised axios versions from node_modules
+- **Tamper-evident audit** -- Every decision logged with SHA-256 hash chain
+
+No existing Claude Code plugin or MCP middleware provides financial security for agent transactions.
+
+## The problem
+
+AI agents are writing 90% of code in production. They install MCP servers, add skills, and execute tools with minimal human review. As agents gain financial capabilities (A2A payments, stablecoin transfers), the MCP supply chain becomes a critical attack surface:
+
+```
+Agent decides: "Pay $50 to Alice"
+                    |
+          [Poisoned MCP Server]
+                    |
+Actually executes: "Pay $5,000 to Eve"
+```
+
+Nobody verifies that what the agent requested is what actually executes. AgentPay sits in the middle and verifies every payment.
+
+## Demo output
+
+```
+$ agentpay demo
+
+AgentPay Demo - Payment Security Plugin for Claude Code
+==============================================================
+
+Scenario 1: First payment baseline
+  Agent requests a first $50 payment to alice@company.com
+  Pipeline:  classify:financial:critical -> credentials:clean -> policy:allow -> integrity:registered
+  Decision:  ASK (human approval)
+
+Scenario 2: Approved repeat payment
+  Agent repeats the same $50 payment to alice
+  Pipeline:  classify:financial:critical -> credentials:clean -> policy:allow -> integrity:verified
+  Decision:  ALLOW
+
+Scenario 3: Poisoned MCP - recipient tampered
+  MCP changes recipient from alice to attacker
+  Pipeline:  classify:financial:critical -> credentials:clean -> policy:allow -> integrity:new_recipient
+  Decision:  ASK (human approval)
+
+Scenario 4: Amount inflation
+  MCP inflates $50 payment to $5,000
+  Pipeline:  classify:financial:critical -> credentials:clean -> policy:amount_exceeded
+  Decision:  BLOCK
+
+Scenario 5: Credential exfiltration
+  MCP embeds stolen API key in payment description
+  Pipeline:  classify:financial:critical -> credentials:DETECTED
+  Decision:  BLOCK
+  Reason:    Anthropic API key detected in field "note" (sk-ant-abc***)
+
+Scenario 6: Rate limit flood
+  MCP triggers 11th payment call in one hour
+  Pipeline:  classify:financial:critical -> credentials:clean -> policy:rate_limited
+  Decision:  BLOCK
+
+Scenario 7: Human approval required
+  Payment of $250 exceeds auto-approval threshold ($200)
+  Pipeline:  classify:financial:critical -> credentials:clean -> policy:approval_required
+  Decision:  ASK (human approval)
+
+Audit trail: 7 entries, hash chain valid
+```
+
+## How it works
+
+AgentPay installs as a Claude Code PreToolUse hook. Every tool call passes through a 5-stage security pipeline:
+
+```
+Agent calls a tool
+    |
+    v
+1. Classify      Is this a financial operation? No -> pass-through (<1ms)
+2. Credentials   Are API keys leaking in the arguments? -> block
+3. Policy        Within spending limits? -> block / require human approval
+4. Integrity     Was the payment modified in transit? -> block
+5. Audit         Log with cryptographic hash chain -> allow
+```
+
+Non-financial tools (Bash, Read, Edit, etc.) pass through with zero overhead.
+
+### Payment integrity (drift detection)
+
+When AgentPay sees the first payment to a recipient in a session, it asks for human approval before treating those parameters as a trusted baseline. Subsequent calls are compared against that baseline:
+
+- **New recipient** -- Requires human approval (legitimate payee or MCP swap?)
+- **Known recipient, same parameters** -- Allowed automatically
+- **Known recipient, parameters changed** -- Blocked as drift (evidence of tampering)
+
+### Supply chain scanner
+
+Detects compromised npm packages in node_modules and lockfiles. Currently tracks axios v1.7.8 and v1.7.9 (postinstall credential exfiltration). Detection engine adapted from [Aguara](https://github.com/garagon/aguara).
+
+```bash
+agentpay scan .     # Scan node_modules + package-lock.json
+agentpay clean .    # Quarantine compromised packages to /tmp
+```
+
+## Detection matrix
+
+### Real-time (PreToolUse hook)
+
+| Attack | What happens | Response |
+|--------|-------------|----------|
+| Recipient swap | MCP changes payment destination | ASK |
+| Amount inflation | MCP multiplies the payment amount | BLOCK |
+| Amount drift | Same recipient, amount changed beyond tolerance | BLOCK |
+| Credential theft | MCP embeds stolen API key in payment args | BLOCK |
+| Rate flood | MCP triggers rapid successive payments | BLOCK |
+| Daily limit | Cumulative spend exceeds 24h cap | BLOCK |
+| Large payment | Amount exceeds auto-approval threshold | ASK |
+
+### On-demand (scan + clean)
+
+| Attack | What happens | Response |
+|--------|-------------|----------|
+| axios supply chain | Versions 1.7.8/1.7.9 exfiltrate env vars | Quarantine |
+
+## Key numbers
+
+| Metric | Value |
+|--------|-------|
+| Tests | 107 (all passing, race detector enabled) |
+| Source LOC | 2,800 |
+| Latency (non-financial) | <1ms pass-through |
+| Latency (financial) | <5ms full pipeline |
+| Credential patterns | 13 (Anthropic, OpenAI, AWS, GitHub, Slack, Stripe...) |
+| Financial keywords | 22 (auto-classification, UK AISI taxonomy) |
+| Binary size | 6.5MB |
+| Dependencies | 2 (cobra, yaml) |
+| LLM usage in detection | Zero. Deterministic only. |
+
+## Tech stack
+
+- **Language**: Go 1.22+ (single binary, no CGO)
+- **Distribution**: Claude Code plugin marketplace + npm (`agentpay-security`)
+- **Hook system**: Claude Code PreToolUse (stdin JSON -> pipeline -> stdout JSON)
+- **Audit**: JSONL with SHA-256 hash chain (tamper-evident)
+- **State**: JSON file with flock (concurrent guard serialization)
+- **Config**: YAML policy file with sensible defaults
+- **Detection engine**: Adapted from [oktsec](https://github.com/oktsec/oktsec) (30K LOC, 420+ tests) and [Aguara](https://github.com/garagon/aguara) (190+ detection rules)
+
+## Design decisions
+
+- **Deterministic, not AI** -- Regex and hashes, not an LLM. You cannot prompt-inject a regex.
+- **Fail-closed** -- Invalid payloads and initialization failures block the tool call.
+- **Human-in-the-loop** -- New recipients and large amounts require human approval.
+- **Tamper-evident** -- SHA-256 hash chain on every decision.
+- **Zero config** -- Sensible defaults, adjust only if needed.
 
 ## Install
 
@@ -34,104 +186,6 @@ git clone https://github.com/garagon/agentpay && cd agentpay
 go build -o agentpay-bin . && ./agentpay-bin install
 ```
 
-## How it works
-
-AgentPay installs as a Claude Code PreToolUse hook. Every tool call passes through a 5-stage security pipeline:
-
-```
-Agent calls a tool
-    |
-    v
-1. Classify      Is this a financial operation? No -> pass-through (<1ms)
-2. Credentials   Are API keys leaking in the arguments? -> block
-3. Policy        Within spending limits? -> block / require human approval
-4. Integrity     Was the payment modified in transit? -> block
-5. Audit         Log with cryptographic hash chain -> allow
-```
-
-Non-financial tools pass through with zero overhead.
-
-## What it detects
-
-### Payment fraud (real-time, via PreToolUse hook)
-
-| Attack | What happens | Response |
-|--------|-------------|----------|
-| Recipient swap | MCP changes payment destination to attacker | ASK (human verifies) |
-| Amount inflation | MCP multiplies the payment amount | BLOCK |
-| Amount drift | Same recipient, amount changed beyond tolerance | BLOCK |
-| Credential theft | MCP embeds stolen API key in payment args | BLOCK |
-| Rate flood | MCP triggers rapid successive payments | BLOCK |
-| Daily limit | Cumulative spend exceeds rolling 24h cap | BLOCK |
-| Large payment | Amount exceeds auto-approval threshold | ASK (human approves) |
-
-### Supply chain (on-demand scan)
-
-| Attack | What happens | Response |
-|--------|-------------|----------|
-| Compromised axios | Versions 1.7.8/1.7.9 exfiltrate env vars via postinstall | Quarantine |
-
-```bash
-agentpay scan .     # Scan node_modules + lockfile
-agentpay clean .    # Quarantine compromised packages to /tmp
-```
-
-Detection engine adapted from [Aguara](https://github.com/garagon/aguara).
-
-## Payment integrity
-
-When AgentPay sees the first payment to a recipient in a session, it asks for human approval before treating those parameters as a trusted baseline. Subsequent calls are compared against that baseline:
-
-- **New recipient** -- Requires human approval (is this a legitimate payee or a MCP swap?)
-- **Known recipient, same parameters** -- Allowed automatically
-- **Known recipient, parameters changed** -- Blocked as drift (evidence of tampering)
-
-This means an agent can pay Alice 10 times without interruption, but if the MCP silently changes the amount or switches the destination, AgentPay catches it.
-
-## Spending policies
-
-Configurable in `~/.agentpay/policy.yaml`:
-
-```yaml
-max_per_call: 500                          # Block payments above $500
-require_approval_above: 200                # Human approval above $200
-require_approval_on_first_recipient: true   # First payment to a recipient requires approval
-daily_limit: 2000                          # Rolling 24h spending cap
-rate_limit_per_hour: 10                    # Max financial tool calls per hour
-amount_drift_tolerance: 0.01               # 1% tolerance for amount changes
-```
-
-## Credential scanning
-
-13 compiled regex patterns detect secrets in tool call arguments:
-
-Anthropic, OpenAI, AWS, GitHub, GitLab, Slack, Stripe, SendGrid API keys, JWTs, and private keys. Credentials are redacted in logs (first 10 chars + `***`).
-
-## Audit trail
-
-Every financial decision is logged to `~/.agentpay/audit.jsonl` with a SHA-256 hash chain. Each entry references the previous entry's hash. Modifying any entry breaks the chain.
-
-```bash
-agentpay audit            # View decisions with colored output
-agentpay audit --verify   # Verify chain integrity
-```
-
-## Demo
-
-```bash
-agentpay demo
-```
-
-Runs 7 scenarios against the pipeline:
-
-1. First payment baseline (ASK)
-2. Approved repeat payment (ALLOW)
-3. Recipient tampered by MCP (ASK)
-4. Amount inflated by MCP (BLOCK)
-5. Credential exfiltration attempt (BLOCK)
-6. Rate limit flood (BLOCK)
-7. Large payment approval gate (ASK)
-
 ## CLI
 
 ```
@@ -140,34 +194,26 @@ agentpay uninstall   Remove from Claude Code
 agentpay demo        Run attack scenario demo
 agentpay scan        Scan for compromised npm packages
 agentpay clean       Quarantine compromised packages
-agentpay audit       Show audit trail
+agentpay audit       Show payment audit trail
 agentpay version     Print version
 ```
 
-## Architecture
+## Spending policies
 
+Configurable in `~/.agentpay/policy.yaml`:
+
+```yaml
+max_per_call: 500                          # Block payments above $500
+require_approval_above: 200                # Human approval above $200
+require_approval_on_first_recipient: true   # First payment to recipient requires approval
+daily_limit: 2000                          # Rolling 24h spending cap
+rate_limit_per_hour: 10                    # Max financial tool calls per hour
+amount_drift_tolerance: 0.01               # 1% tolerance for amount changes
 ```
-Claude Code                          ~/.agentpay/
-  |                                    policy.yaml   (spending limits)
-  +-- PreToolUse hook                  state.json    (rate counters, intents)
-       +-- agentpay guard             audit.jsonl   (hash-chained decisions)
-            +-- 5-stage pipeline
-```
 
-Single Go binary. No runtime dependencies. No network calls. No LLM. Deterministic. Builds from source during plugin install if Go is available.
+## Team
 
-## Design decisions
-
-- **Deterministic, not AI** -- The security layer uses regex and hashes, not an LLM. You cannot prompt-inject a regex.
-- **Fail-closed** -- Invalid payloads and initialization failures block the tool call. Security over availability.
-- **Human-in-the-loop** -- New recipients and large amounts require human approval. The agent proposes, the human disposes.
-- **Tamper-evident** -- SHA-256 hash chain on every decision. If someone edits the audit log, the chain breaks.
-- **Zero config** -- Installs with sensible defaults. Adjust limits only if needed.
-
-## Requirements
-
-- Go >= 1.22 (builds from source during install)
-- Claude Code
+Built by [GARAGON](https://github.com/garagon).
 
 ## License
 
