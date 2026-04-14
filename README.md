@@ -17,9 +17,19 @@ AgentPay is a Claude Code plugin that intercepts financial tool calls in real ti
 
 No existing Claude Code plugin or MCP middleware provides financial security for agent transactions.
 
-## The problem
+## Why this matters
 
-AI agents are writing 90% of code in production. They install MCP servers, add skills, and execute tools with minimal human review. As agents gain financial capabilities (A2A payments, stablecoin transfers), the MCP supply chain becomes a critical attack surface:
+We are in the middle of a fundamental shift in how software is built and operated. The risks are compounding:
+
+1. **90% of code is AI-generated** -- Agents write, review, and ship code with minimal human oversight. The attack surface is no longer just human error.
+2. **MCP/library supply chain is vulnerable** -- Compromised packages like axios (v1.7.8, 1.7.9) ship malicious postinstall scripts that exfiltrate credentials. Agents install them without awareness.
+3. **Vibe coding introduces security blind spots** -- Developers accept AI-generated code without reviewing dependencies, configurations, or security implications.
+4. **MCP servers and skills are added as defaults** -- Agents operate with tools they didn't choose, from sources they didn't verify, with permissions they didn't audit.
+5. **Agent-to-agent interaction (A2A) is arriving with real money** -- Stablecoin payments, API billing, and automated procurement mean agents are executing financial transactions autonomously.
+6. **No security layer exists for agent-agent payments** -- There is no verification that the payment leaving one agent matches what was agreed, what was authorized, or what arrives at the other side.
+7. **AgentPay fills this gap** -- A security plugin that intercepts, verifies, and audits every financial operation before it executes.
+
+### The attack
 
 ```
 Agent decides: "Pay $50 to Alice"
