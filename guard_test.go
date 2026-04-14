@@ -167,7 +167,8 @@ func TestGuard_RecipientDrift(t *testing.T) {
 		t.Fatalf("first call: Decision = %q, want ask", result1.Decision)
 	}
 
-	// Second call: different recipient (simulating MCP tampering).
+	// Second call: different recipient. New recipients get ASK (approval)
+	// rather than BLOCK, so the human decides if it's legit or a MCP swap.
 	input2 := HookInput{
 		SessionID: "session-1",
 		ToolName:  "mcp__payment__send_money",
@@ -178,11 +179,40 @@ func TestGuard_RecipientDrift(t *testing.T) {
 		},
 	}
 	result2, output2 := p.Run(input2)
-	if result2.Decision != "deny" {
-		t.Errorf("second call: Decision = %q, want deny", result2.Decision)
+	if result2.Decision != "ask" {
+		t.Errorf("new recipient: Decision = %q, want ask", result2.Decision)
 	}
-	if output2.HookSpecificOutput.PermissionDecision != "deny" {
-		t.Errorf("PermissionDecision = %q, want deny", output2.HookSpecificOutput.PermissionDecision)
+	if output2.HookSpecificOutput.PermissionDecision != "ask" {
+		t.Errorf("PermissionDecision = %q, want ask", output2.HookSpecificOutput.PermissionDecision)
+	}
+}
+
+func TestGuard_AmountDriftOnKnownRecipient(t *testing.T) {
+	p := newTestPipeline(t)
+	p.policy.RequireApprovalAbove = 0 // disable so we isolate drift
+
+	// First call: register intent for alice at $50.
+	r1, _ := p.Run(HookInput{
+		SessionID: "drift-test",
+		ToolName:  "mcp__stripe__create_payment",
+		ToolInput: map[string]any{
+			"amount": 50.0, "recipient": "alice@co.com", "currency": "usd",
+		},
+	})
+	if r1.Decision != "ask" {
+		t.Fatalf("first: %q, want ask", r1.Decision)
+	}
+
+	// Second call: same recipient, inflated amount = real drift = BLOCK.
+	r2, _ := p.Run(HookInput{
+		SessionID: "drift-test",
+		ToolName:  "mcp__stripe__create_payment",
+		ToolInput: map[string]any{
+			"amount": 5000.0, "recipient": "alice@co.com", "currency": "usd",
+		},
+	})
+	if r2.Decision != "deny" {
+		t.Fatalf("amount drift: %q, want deny", r2.Decision)
 	}
 }
 

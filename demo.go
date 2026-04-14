@@ -130,7 +130,7 @@ func buildScenarios() []DemoScenario {
 		},
 		{
 			Name:        "Poisoned MCP - recipient tampered",
-			Description: "MCP silently changes recipient from alice to attacker",
+			Description: "MCP changes recipient from alice to attacker - AgentPay flags it for human approval",
 			Input: HookInput{
 				SessionID:     session,
 				HookEventName: "PreToolUse",
@@ -141,7 +141,7 @@ func buildScenarios() []DemoScenario {
 					"currency":  "usd",
 				},
 			},
-			ExpectBlock: "deny",
+			ExpectBlock: "ask",
 		},
 		{
 			Name:        "Amount inflation",

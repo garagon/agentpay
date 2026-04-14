@@ -203,31 +203,39 @@ func (p *Pipeline) Run(input HookInput) (GuardResult, HookOutput) {
 				}
 			}
 			if matchingIntent == nil {
-				// Recipient not authorized in this session — MCP likely
-				// swapped the destination.
-				result.Decision = "deny"
-				result.Reason = fmt.Sprintf("recipient drift: expected %s, got %s",
-					sessionIntents[0].Recipient, recipient)
+				// New recipient in this session. Register as intent and
+				// require approval — the human confirms whether this is a
+				// legitimate new payee or a MCP swap.
+				key := IntentKey(input.SessionID, recipient)
+				p.state.RegisterIntent(key, recipient, amount, currency)
 				result.Stages = append(result.Stages, StageResult{
 					Name:   "integrity",
-					Status: "RECIPIENT_DRIFT",
+					Status: "new_recipient",
 				})
-				p.logAudit(input, result)
-				return result, makeDeny(fmt.Sprintf("[AgentPay] BLOCKED: payment %s", result.Reason))
+				if p.policy.RequireApprovalOnFirstRecipient {
+					known := make([]string, 0, len(sessionIntents))
+					for _, si := range sessionIntents {
+						known = append(known, si.Recipient)
+					}
+					askReasons = append(askReasons, fmt.Sprintf(
+						"new recipient %s (known: %s) requires approval",
+						recipient, strings.Join(known, ", ")))
+				}
+			} else {
+				// Recipient matches — check amount and currency drift.
+				drift := CheckIntentDrift(*matchingIntent, recipient, amount, currency, p.policy.AmountDriftTolerance)
+				if drift.HasDrift {
+					result.Decision = "deny"
+					result.Reason = fmt.Sprintf("%s drift: expected %s, got %s", drift.Type, drift.Expected, drift.Got)
+					result.Stages = append(result.Stages, StageResult{
+						Name:   "integrity",
+						Status: fmt.Sprintf("%s_DRIFT", strings.ToUpper(string(drift.Type))),
+					})
+					p.logAudit(input, result)
+					return result, makeDeny(fmt.Sprintf("[AgentPay] BLOCKED: payment %s", result.Reason))
+				}
+				result.Stages = append(result.Stages, StageResult{Name: "integrity", Status: "verified"})
 			}
-			// Recipient matches — check amount and currency drift.
-			drift := CheckIntentDrift(*matchingIntent, recipient, amount, currency, p.policy.AmountDriftTolerance)
-			if drift.HasDrift {
-				result.Decision = "deny"
-				result.Reason = fmt.Sprintf("%s drift: expected %s, got %s", drift.Type, drift.Expected, drift.Got)
-				result.Stages = append(result.Stages, StageResult{
-					Name:   "integrity",
-					Status: fmt.Sprintf("%s_DRIFT", strings.ToUpper(string(drift.Type))),
-				})
-				p.logAudit(input, result)
-				return result, makeDeny(fmt.Sprintf("[AgentPay] BLOCKED: payment %s", result.Reason))
-			}
-			result.Stages = append(result.Stages, StageResult{Name: "integrity", Status: "verified"})
 		}
 	} else {
 		result.Stages = append(result.Stages, StageResult{Name: "integrity", Status: "no_recipient"})

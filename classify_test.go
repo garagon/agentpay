@@ -109,6 +109,25 @@ func TestClassifyTool(t *testing.T) {
 	}
 }
 
+func TestClassifyTool_NoFalsePositiveOnSubstring(t *testing.T) {
+	// P1 regression: "pay" must not match "payload", "display", "repay" etc.
+	falsePositives := []string{
+		"mcp__api__send_payload",
+		"mcp__ui__display_results",
+		"mcp__data__replay_events",
+		"mcp__net__tcp_relay",
+	}
+	for _, name := range falsePositives {
+		t.Run(name, func(t *testing.T) {
+			cls := ClassifyTool(name, "")
+			if cls.Financial {
+				t.Errorf("ClassifyTool(%q) = financial (matched: %v), want non-financial",
+					name, cls.MatchedKeywords)
+			}
+		})
+	}
+}
+
 func TestIsFinancial(t *testing.T) {
 	tests := []struct {
 		toolName string
@@ -120,6 +139,8 @@ func TestIsFinancial(t *testing.T) {
 		{"Read", false},
 		{"Edit", false},
 		{"mcp__github__search_repositories", false},
+		{"mcp__api__send_payload", false},     // P1: "pay" substring
+		{"mcp__ui__display_results", false},   // P1: "pay" substring
 	}
 	for _, tt := range tests {
 		t.Run(tt.toolName, func(t *testing.T) {

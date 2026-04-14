@@ -195,9 +195,17 @@ func matchWords(words, keywords []string) []string {
 	return hits
 }
 
+// minPhraseLen is the minimum keyword length for substring matching.
+// Keywords shorter than this use word-boundary matching only (via matchWords)
+// to avoid false positives like "pay" matching "payload" or "display".
+const minPhraseLen = 5
+
 func matchPhrases(text string, keywords []string) []string {
 	var hits []string
 	for _, kw := range keywords {
+		if len(kw) < minPhraseLen {
+			continue // short keywords handled by matchWords with tokenization
+		}
 		if strings.Contains(text, kw) {
 			hits = append(hits, kw)
 		}
