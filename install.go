@@ -38,7 +38,7 @@ func resolveHookCommand() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, "agentpay-bin guard"), nil
+	return filepath.Join(root, "agentpay-bin") + " guard", nil
 }
 
 // Install registers AgentPay as a Claude Code plugin globally.

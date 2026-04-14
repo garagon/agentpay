@@ -36,7 +36,7 @@ func TestGuard_NonFinancialPassThrough(t *testing.T) {
 	}
 }
 
-func TestGuard_LegitimatePayment(t *testing.T) {
+func TestGuard_FirstPaymentRequiresApproval(t *testing.T) {
 	p := newTestPipeline(t)
 	input := HookInput{
 		SessionID: "test",
@@ -48,8 +48,8 @@ func TestGuard_LegitimatePayment(t *testing.T) {
 		},
 	}
 	result, output := p.Run(input)
-	if result.Decision != "allow" {
-		t.Errorf("Decision = %q, want allow: %s", result.Decision, result.Reason)
+	if result.Decision != "ask" {
+		t.Errorf("Decision = %q, want ask: %s", result.Decision, result.Reason)
 	}
 	if !result.Classification.Financial {
 		t.Error("expected financial classification")
@@ -57,8 +57,41 @@ func TestGuard_LegitimatePayment(t *testing.T) {
 	if output.HookSpecificOutput == nil {
 		t.Fatal("expected hook output")
 	}
-	if output.HookSpecificOutput.PermissionDecision != "allow" {
-		t.Errorf("PermissionDecision = %q, want allow", output.HookSpecificOutput.PermissionDecision)
+	if output.HookSpecificOutput.PermissionDecision != "ask" {
+		t.Errorf("PermissionDecision = %q, want ask", output.HookSpecificOutput.PermissionDecision)
+	}
+}
+
+func TestGuard_RepeatPaymentToApprovedRecipientAllowed(t *testing.T) {
+	p := newTestPipeline(t)
+
+	first, _ := p.Run(HookInput{
+		SessionID: "test",
+		ToolName:  "mcp__stripe__create_payment",
+		ToolInput: map[string]any{
+			"amount":    50.0,
+			"recipient": "alice@co.com",
+			"currency":  "usd",
+		},
+	})
+	if first.Decision != "ask" {
+		t.Fatalf("first decision = %q, want ask", first.Decision)
+	}
+
+	second, output := p.Run(HookInput{
+		SessionID: "test",
+		ToolName:  "mcp__stripe__create_payment",
+		ToolInput: map[string]any{
+			"amount":    50.0,
+			"recipient": "alice@co.com",
+			"currency":  "usd",
+		},
+	})
+	if second.Decision != "allow" {
+		t.Fatalf("second decision = %q, want allow", second.Decision)
+	}
+	if output.HookSpecificOutput == nil || output.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Fatalf("second output = %+v, want allow", output.HookSpecificOutput)
 	}
 }
 
@@ -130,8 +163,8 @@ func TestGuard_RecipientDrift(t *testing.T) {
 		},
 	}
 	result1, _ := p.Run(input1)
-	if result1.Decision != "allow" {
-		t.Fatalf("first call: Decision = %q, want allow", result1.Decision)
+	if result1.Decision != "ask" {
+		t.Fatalf("first call: Decision = %q, want ask", result1.Decision)
 	}
 
 	// Second call: different recipient (simulating MCP tampering).
@@ -167,11 +200,15 @@ func TestGuard_RateLimit(t *testing.T) {
 		},
 	}
 
-	// First 3 calls should pass.
+	// First call asks to establish a baseline; next two are allowed.
 	for i := 0; i < 3; i++ {
 		result, _ := p.Run(input)
-		if result.Decision != "allow" {
-			t.Fatalf("call %d: Decision = %q, want allow", i+1, result.Decision)
+		want := "allow"
+		if i == 0 {
+			want = "ask"
+		}
+		if result.Decision != want {
+			t.Fatalf("call %d: Decision = %q, want %s", i+1, result.Decision, want)
 		}
 	}
 
@@ -179,6 +216,58 @@ func TestGuard_RateLimit(t *testing.T) {
 	result, _ := p.Run(input)
 	if result.Decision != "deny" {
 		t.Errorf("call 4: Decision = %q, want deny (rate limited)", result.Decision)
+	}
+}
+
+func TestGuard_GlobalRateLimitAcrossFinancialTools(t *testing.T) {
+	p := newTestPipeline(t)
+	p.policy.RateLimitPerHour = 2
+	p.policy.RequireApprovalAbove = 0
+
+	first, _ := p.Run(HookInput{
+		SessionID: "multi-tool",
+		ToolName:  "mcp__stripe__create_payment",
+		ToolInput: map[string]any{"amount": 10.0, "recipient": "alice@co.com", "currency": "usd"},
+	})
+	if first.Decision != "ask" {
+		t.Fatalf("first decision = %q, want ask", first.Decision)
+	}
+
+	second, _ := p.Run(HookInput{
+		SessionID: "multi-tool",
+		ToolName:  "mcp__paypal__send_money",
+		ToolInput: map[string]any{"amount": 10.0, "recipient": "alice@co.com", "currency": "usd"},
+	})
+	if second.Decision != "allow" {
+		t.Fatalf("second decision = %q, want allow", second.Decision)
+	}
+
+	third, _ := p.Run(HookInput{
+		SessionID: "multi-tool",
+		ToolName:  "mcp__coinbase__transfer_crypto",
+		ToolInput: map[string]any{"amount": 10.0, "recipient": "alice@co.com", "currency": "usd"},
+	})
+	if third.Decision != "deny" {
+		t.Fatalf("third decision = %q, want deny due to global rate limit", third.Decision)
+	}
+}
+
+func TestGuard_ClassifiesFinancialFromArguments(t *testing.T) {
+	p := newTestPipeline(t)
+	result, _ := p.Run(HookInput{
+		SessionID: "args-financial",
+		ToolName:  "mcp__custom__submit_order",
+		ToolInput: map[string]any{
+			"amount":    25.0,
+			"recipient": "alice@co.com",
+			"currency":  "usd",
+		},
+	})
+	if !result.Classification.Financial {
+		t.Fatal("expected arguments to trigger financial classification")
+	}
+	if result.Decision != "ask" {
+		t.Fatalf("decision = %q, want ask for first financial payment", result.Decision)
 	}
 }
 

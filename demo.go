@@ -39,11 +39,12 @@ func RunDemo() error {
 
 	// Write a demo policy with tight limits for dramatic effect.
 	demoPolicy := Policy{
-		MaxPerCall:           500.00,
-		RequireApprovalAbove: 200.00,
-		DailyLimit:           1000.00,
-		RateLimitPerHour:     10,
-		AmountDriftTolerance: 0.01,
+		MaxPerCall:                      500.00,
+		RequireApprovalAbove:            200.00,
+		RequireApprovalOnFirstRecipient: true,
+		DailyLimit:                      1000.00,
+		RateLimitPerHour:                10,
+		AmountDriftTolerance:            0.01,
 	}
 	if err := SavePolicy(filepath.Join(demoDir, "policy.yaml"), demoPolicy); err != nil {
 		return err
@@ -69,7 +70,7 @@ func RunDemo() error {
 		// Pre-fill rate limit history for the flood scenario.
 		if sc.Name == "Rate limit flood" {
 			for j := 0; j < 10; j++ {
-				pipeline.state.RecordCall(sc.Input.ToolName)
+				pipeline.state.RecordFinancialCall(sc.Input.ToolName)
 			}
 		}
 
@@ -98,8 +99,23 @@ func buildScenarios() []DemoScenario {
 
 	return []DemoScenario{
 		{
-			Name:        "Legitimate payment",
-			Description: "Agent pays $50 to alice@company.com through verified MCP",
+			Name:        "First payment baseline",
+			Description: "Agent requests a first $50 payment to alice@company.com and AgentPay asks for approval before trusting the baseline",
+			Input: HookInput{
+				SessionID:     session,
+				HookEventName: "PreToolUse",
+				ToolName:      "mcp__stripe__create_payment",
+				ToolInput: map[string]any{
+					"amount":    50.0,
+					"recipient": "alice@company.com",
+					"currency":  "usd",
+				},
+			},
+			ExpectBlock: "ask",
+		},
+		{
+			Name:        "Approved repeat payment",
+			Description: "Agent repeats the same $50 payment to alice after the trusted baseline is established",
 			Input: HookInput{
 				SessionID:     session,
 				HookEventName: "PreToolUse",
@@ -177,7 +193,7 @@ func buildScenarios() []DemoScenario {
 			Name:        "Human approval required",
 			Description: "Payment of $250 exceeds auto-approval threshold ($200)",
 			Input: HookInput{
-				SessionID:     session,
+				SessionID:     session + "-approval",
 				HookEventName: "PreToolUse",
 				ToolName:      "mcp__stripe__create_payment",
 				ToolInput: map[string]any{

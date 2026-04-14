@@ -95,36 +95,48 @@ func newGuardCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read stdin: %w", err)
 			}
-
-			var input HookInput
-			if err := json.Unmarshal(data, &input); err != nil {
-				// If we can't parse the input, allow the tool call
-				// (fail-open to avoid blocking non-standard tools).
-				return nil
-			}
-
-			pipeline, err := NewPipeline(DefaultConfigDir())
+			out, err := HandleGuard(data, DefaultConfigDir())
 			if err != nil {
-				// Fail-open: allow the tool call if pipeline fails to init.
+				return err
+			}
+			if len(out) == 0 {
 				return nil
 			}
-			defer pipeline.Close()
-
-			_, output := pipeline.Run(input)
-
-			// Non-financial tools: no output (implicit allow).
-			if output.HookSpecificOutput == nil {
-				return nil
-			}
-			// Non-financial allow: silent pass-through.
-			if output.HookSpecificOutput.PermissionDecision == "allow" &&
-				output.HookSpecificOutput.AdditionalContext == "" {
-				return nil
-			}
-
-			return json.NewEncoder(os.Stdout).Encode(output)
+			_, err = os.Stdout.Write(out)
+			return err
 		},
 	}
+}
+
+func HandleGuard(data []byte, configDir string) ([]byte, error) {
+	var input HookInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		return encodeHookOutput(makeDeny("[AgentPay] BLOCKED: invalid hook payload"))
+	}
+
+	pipeline, err := NewPipeline(configDir)
+	if err != nil {
+		return encodeHookOutput(makeDeny("[AgentPay] BLOCKED: guard initialization failed"))
+	}
+	defer pipeline.Close()
+
+	_, output := pipeline.Run(input)
+	if output.HookSpecificOutput == nil {
+		return nil, nil
+	}
+	if output.HookSpecificOutput.PermissionDecision == "allow" &&
+		output.HookSpecificOutput.AdditionalContext == "" {
+		return nil, nil
+	}
+	return encodeHookOutput(output)
+}
+
+func encodeHookOutput(output HookOutput) ([]byte, error) {
+	data, err := json.Marshal(output)
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
 }
 
 func newAuditCmd() *cobra.Command {

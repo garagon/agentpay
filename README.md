@@ -47,11 +47,12 @@ AgentPay sits between Claude and the MCP server, catching the manipulation befor
 agentpay demo
 ```
 
-Runs 6 attack scenarios against the security pipeline:
+Runs 7 attack scenarios against the security pipeline:
 
 | Scenario | Attack | Result |
 |----------|--------|--------|
-| Legitimate payment | Agent pays $50 to alice | ALLOW |
+| First payment baseline | Agent requests the first $50 payment to alice | ASK |
+| Approved repeat payment | Agent repeats the approved $50 payment to alice | ALLOW |
 | Recipient tampered | MCP changes recipient to attacker | BLOCK |
 | Amount inflation | MCP inflates $50 to $5,000 | BLOCK |
 | Credential exfiltration | MCP embeds stolen API key | BLOCK |
@@ -68,7 +69,7 @@ AgentPay auto-classifies every tool call using keyword matching against the UK A
 
 ### Payment integrity
 
-When a financial tool call is allowed, AgentPay registers the payment parameters (recipient, amount, currency) as a baseline. If a subsequent call in the same session changes the recipient or amount beyond tolerance, it's flagged as drift -- evidence of MCP tampering.
+When AgentPay sees the first payment for a recipient in a session, it asks for approval before treating those parameters (recipient, amount, currency) as a trusted baseline. Subsequent calls in the same session are compared against that baseline. If the recipient, amount, or currency changes beyond tolerance, it's flagged as drift -- evidence of MCP tampering.
 
 ### Spending policies
 
@@ -77,6 +78,7 @@ Default limits (configurable in `~/.agentpay/policy.yaml`):
 ```yaml
 max_per_call: 500           # Block payments above $500
 require_approval_above: 200  # Human approval above $200
+require_approval_on_first_recipient: true # First payment to a recipient in-session requires approval
 daily_limit: 2000            # Rolling 24h spending cap
 rate_limit_per_hour: 10      # Max financial calls per hour
 amount_drift_tolerance: 0.01 # 1% tolerance for amount changes
