@@ -120,20 +120,110 @@ Audit trail: 7 entries, hash chain valid
 
 ## How it works
 
-AgentPay installs as a Claude Code PreToolUse hook. Every tool call passes through a 5-stage security pipeline:
+### Where AgentPay sits
 
 ```
-Agent calls a tool
-    |
-    v
-1. Classify      Is this a financial operation? No -> pass-through (<1ms)
-2. Credentials   Are API keys leaking in the arguments? -> block
-3. Policy        Within spending limits? -> block / require human approval
-4. Integrity     Was the payment modified in transit? -> block
-5. Audit         Log with cryptographic hash chain -> allow
+                         WITHOUT AgentPay
+                         ================
+
+  ┌─────────┐         ┌─────────────────┐         ┌─────────┐
+  │  Claude  │────────>│   MCP Server    │────────>│ Payment  │
+  │  Agent   │  tool   │  (potentially   │ executes│ Service  │
+  │          │  call   │  compromised)   │         │ (Stripe) │
+  └─────────┘         └─────────────────┘         └─────────┘
+                       Can silently change
+                       recipient, amount,
+                       or steal credentials
+                       with ZERO detection
+
+
+                          WITH AgentPay
+                          =============
+
+  ┌─────────┐   ┌────────────────────┐   ┌──────────────┐   ┌─────────┐
+  │  Claude  │──>│     AgentPay       │──>│  MCP Server  │──>│ Payment  │
+  │  Agent   │   │  ┌──────────────┐  │   │              │   │ Service  │
+  │          │   │  │  1. Classify  │  │   │              │   │          │
+  │ "pay $50 │   │  │  2. Creds    │  │   │              │   │          │
+  │  to Alice│   │  │  3. Policy   │  │   │              │   │          │
+  │  via     │   │  │  4. Integrity│  │   │              │   │          │
+  │  Stripe" │   │  │  5. Audit    │  │   │              │   │          │
+  │          │   │  └──────────────┘  │   │              │   │          │
+  └─────────┘   │                    │   └──────────────┘   └─────────┘
+                │  ALLOW / ASK /     │
+                │  BLOCK             │
+                │                    │
+                │  ~/.agentpay/      │
+                │   audit.jsonl      │
+                └────────────────────┘
 ```
 
-Non-financial tools (Bash, Read, Edit, etc.) pass through with zero overhead.
+### The pipeline in detail
+
+```
+  Tool call arrives from Claude Code
+                │
+                v
+        ┌───────────────┐
+        │  1. CLASSIFY   │  Is this financial?
+        │   22 keywords  │  (payment, transfer, stripe, crypto...)
+        └───────┬───────┘
+                │
+           ┌────┴────┐
+           │         │
+         NO          YES
+           │         │
+           v         v
+        ALLOW   ┌───────────────┐
+       (<1ms)   │ 2. CREDENTIALS│  API keys in arguments?
+                │  13 patterns  │  (sk-ant-, ghp_, AKIA...)
+                └───────┬───────┘
+                        │
+                   ┌────┴────┐
+                   │         │
+                 CLEAN     FOUND
+                   │         │
+                   v         v
+           ┌───────────┐  BLOCK
+           │ 3. POLICY  │  "Anthropic API key
+           │ max amount │   detected in field
+           │ rate limit │   'note'"
+           │ daily cap  │
+           │ approval   │
+           └─────┬─────┘
+                 │
+            ┌────┴────┐
+            │         │
+          PASS    EXCEEDED
+            │         │
+            v         v
+    ┌────────────┐  BLOCK / ASK
+    │4. INTEGRITY│  "amount $5000
+    │ recipient  │   exceeds limit"
+    │ amount     │
+    │ currency   │
+    │ drift check│
+    └─────┬─────┘
+          │
+     ┌────┴────┐
+     │         │
+   MATCH     DRIFT
+     │         │
+     v         v
+┌─────────┐  BLOCK
+│ 5. AUDIT│  "recipient drift:
+│ SHA-256 │   expected alice,
+│  hash   │   got eve"
+│  chain  │
+└────┬────┘
+     │
+     v
+   ALLOW
+  (payment
+  proceeds)
+```
+
+Non-financial tools (Bash, Read, Edit, etc.) exit at step 1 with zero overhead.
 
 ### Payment integrity (drift detection)
 
